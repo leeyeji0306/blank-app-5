@@ -36,10 +36,10 @@ import pandas as pd
 import streamlit as st
 import pandas as pd
 
-uploaded_file = st.file_uploader("CSV 파일 업로드", type="csv")
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    st.write(df)
+import os
+
+csv_path = "heatwave_1991_2025.csv"  # 현재 경로 기준
+print(os.path.exists(csv_path))  # True면 존재, False면 파일 경로 확인 필요
 
 
 # # CSV 경로 확인
