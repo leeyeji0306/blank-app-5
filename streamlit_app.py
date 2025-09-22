@@ -52,27 +52,23 @@ csv_path = "heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세�
 df = pd.read_csv(csv_path, sep=",")
 
 import pandas as pd
+from datetime import datetime, timedelta
 
-# CSV 읽기
+# CSV 불러오기
 df = pd.read_csv("heatwave_1991_2025.csv")
 
-# 컬럼 확인
-print(df.columns)
+# 연도-일수(DOY)를 날짜로 변환
+df['Date'] = df.apply(lambda row: datetime(row['YEAR'], 1, 1) + timedelta(days=row['DOY']-1), axis=1)
+df['Month'] = df['Date'].dt.month
 
-# 영어 컬럼 기준으로 melt
-keep_cols = []  # 고정할 컬럼이 있으면 여기에 추가
-month_cols = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+# 폭염일 정의: 최고기온 >= 33°C
+df['Heatwave'] = df['T2M_MAX'] >= 33
 
-# melt 전에 실제 존재하는 컬럼만 사용
-month_cols = [c for c in month_cols if c in df.columns]
+# 월별 폭염일수 집계
+monthly = df.groupby(['YEAR','Month'])['Heatwave'].sum().reset_index()
+monthly.rename(columns={'YEAR':'Year','Month':'Month','Heatwave':'HeatwaveDays'}, inplace=True)
 
-m = df.melt(id_vars=keep_cols + ["Year"], 
-            value_vars=month_cols, 
-            var_name="Month", 
-            value_name="HeatwaveDays")
-
-print(m.head())
+print(monthly.head())
 
 
 
