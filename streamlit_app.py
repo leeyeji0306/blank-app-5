@@ -42,14 +42,14 @@ csv_path = "heatwave_1991_2025.csv"  # 현재 경로 기준
 print(os.path.exists(csv_path))  # True면 존재, False면 파일 경로 확인 필요
 
 
-# # CSV 경로 확인
-# csv_path = "/workspaces/blank-app-5/heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세요
+# CSV 경로 확인
+csv_path = "/workspaces/blank-app-5/heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세요
 
-# # CSV 읽기
-# df = pd.read_csv(csv_path)
+# CSV 읽기
+df = pd.read_csv(csv_path)
 
-# # 컬럼 이름 변경
-# df = df.rename(columns={"Year": "연도"})
+# 컬럼 이름 변경
+df = df.rename(columns={"Year": "연도"})
 
 
 # Pretendard 적용 시도 (없으면 자동 생략)
