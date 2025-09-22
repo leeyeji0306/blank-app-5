@@ -4,22 +4,21 @@
 Streamlit + GitHub Codespaces 데이터 대시보드 (기후위기 정신건강/학업/미래 확장)
 
 구성:
-1) CSV 파일 데이터 대시보드 (heatwave_1991_2025.csv 기반)
+1) 공식 공개 데이터 대시보 (NASA POWER 일일 기온 API, 서울 좌표)
 2) 사용자 입력 대시보드 (프롬프트의 "폭염일수" 표 고정 내장)
 3) 기후위기 & 청소년 정신건강 (연구 참고) 탭
 4) 기후위기 & 청소년 학업 (연구 참고) 탭
-5) 기후위기, 우리의 미래 (대안 탐색) 탭
+5) 기후위기, 우리의 미래 (대안 탐색) 탭 (★새로운 메뉴)
 
-[!!! 중요 변경 사항 !!!]
-1. load_nasa_power_from_csv 실패 시 fallback_data_generator()를 직접 반환하도록 수정 (1차 수정).
-2. make_heatwave_flags 함수 내부에 빈 데이터프레임 안전 처리 로직을 추가하여 TypeError 최종 해결 (2차 수정).
+폰트:
+- /fonts/Pretendard-Bold.ttf 존재 시 Streamlit/Plotly에 적용 시도(없으면 자동 생략)
 """
 
 import io
 import json
 import math
 import textwrap
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from pathlib import Path
 
 import numpy as np
@@ -34,28 +33,25 @@ import plotly.express as px
 # -----------------------------
 st.set_page_config(page_title="기후위기 & 청소년 대응 대시보드", layout="wide")
 
-# Pretendard 적용 시도 (없으면 자동 생략)
-def inject_font_css():
-    font_path = Path("/fonts/Pretendard-Bold.ttf")
-    if font_path.exists():
-        st.markdown(
-            f"""
-            <style>
-            @font-face {{
-                font-family: 'Pretendard';
-                src: url('file://{font_path.as_posix()}') format('truetype');
-                font-weight: 700;
-                font-style: normal;
-            }}
-            html, body, [class*="css"], .stMarkdown, .stButton, .stSelectbox, .stSlider, .stText, .stMetric, .stDataFrame {{
-                font-family: 'Pretendard', 'Noto Sans KR', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-inject_font_css()
+# 폰트 설정
+font_path = Path("/fonts/Pretendard-Bold.ttf")
+if font_path.exists():
+    st.markdown(
+        f"""
+        <style>
+        @font-face {{
+            font-family: 'Pretendard';
+            src: url('file://{font_path.as_posix()}') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }}
+        html, body, [class*="css"], .stMarkdown, .stButton, .stSelectbox, .stSlider, .stText, .stMetric, .stDataFrame {{
+            font-family: 'Pretendard', 'Noto Sans KR', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 PLOTLY_FONT = "Pretendard, Noto Sans KR, Arial, sans-serif"
 
@@ -89,7 +85,7 @@ def clean_standardize(df, date_col="date", value_col="value", group_col=None):
         df = df.drop_duplicates(subset=[date_col])
     # 타입 통일
     df[date_col] = pd.to_datetime(df[date_col]).dt.date
-    # value를 숫자형으로 (여기서 오류가 났었지만, 앞선 함수 수정으로 해결됨)
+    # value를 숫자형으로
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
     df = df.dropna(subset=[value_col])
     # 미래 데이터 제거
@@ -97,7 +93,7 @@ def clean_standardize(df, date_col="date", value_col="value", group_col=None):
     return df
 
 def download_button_for_df(df, filename, label="CSV 다운로드"):
-    csv = df.to_csv(index=False).encode("utf-utf-sig")
+    csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(label=label, data=csv, file_name=filename, mime="text/csv")
 
 def plot_line(df, title, yaxis_title):
@@ -143,89 +139,50 @@ def plot_bar(df, title, yaxis_title, barmode="group"):
     st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
-# 1) CSV 파일 로드 및 전처리 함수 (기존 NASA API 함수 대체)
+# 1) 공개 데이터 대시보드 함수
 # -----------------------------
-def fallback_data_generator():
-    """CSV 로드 실패 시 사용하는 예시 데이터 생성기"""
-    dates = pd.date_range(end=TODAY_DATE, periods=60, freq="D")
-    np.random.seed(42)
-    base = 27 + np.sin(np.linspace(0, 3 * np.pi, len(dates))) * 5
-    avg = base + np.random.normal(0, 1.2, len(dates))
-    tmax = avg + np.random.uniform(3, 8, len(dates))
-    df = pd.DataFrame({"date": dates.date, "value": np.r_[avg, tmax], "group": ["일 평균기온(℃)"] * len(dates) + ["일 최고기온(℃)"] * len(dates)})
-    df = clean_standardize(df, "date", "value", "group")
-    df["fallback"] = True
-    return df
-
-@st.cache_data(show_spinner=True, ttl=60 * 60 * 24)
-def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
-    """
-    제공된 NASA CSV 파일(YEAR, DOY, T2M_MAX, T2M_MIN, T2M)에서 데이터를 로드하고 전처리합니다.
-    """
-    
+@st.cache_data(show_spinner=True, ttl=60 * 60)
+def fetch_nasa_power_daily(lat=37.5665, lon=126.9780, start="2015-01-01", end=None):
+    if end is None:
+        end = TODAY_DATE.strftime("%Y-%m-%d")
+    start_str = pd.to_datetime(start).strftime("%Y%m%d")
+    end_str = pd.to_datetime(end).strftime("%Y%m%d")
+    base_url = "https://power.larc.nasa.gov/api/temporal/daily/point"
+    params = {"parameters": "T2M,T2M_MAX", "community": "RE", "latitude": lat, "longitude": lon, "start": start_str, "end": end_str, "format": "JSON"}
     try:
-        # 파일 로드
-        df_raw = pd.read_csv(filename)
-    except FileNotFoundError:
-        # 파일이 없을 경우, 폴백(예시 데이터) 생성 함수 호출 후 반환
-        return fallback_data_generator() # <--- 1차 수정
-    except Exception as e:
-        # 기타 로드 오류 시 폴백
-        st.error(f"CSV 파일을 읽는 중 예기치 않은 오류 발생: {e}")
-        return fallback_data_generator()
-    except FileNotFoundError:
-        return fallback_data_generator()
-
-    df = df_raw.copy()
-    
-    # NASA POWER 결측값(-999)을 NaN으로 변환하여 처리하고, 결측된 행 제거
-    df.replace(-999.0, np.nan, inplace=True)
-    df.dropna(subset=['T2M_MAX', 'T2M_MIN', 'T2M'], inplace=True)
-
-    # 1. YEAR와 DOY를 정수로 변환 및 날짜 생성
-    try:
-        df['YEAR'] = df['YEAR'].astype(int)
-        df['DOY'] = df['DOY'].astype(int)
-    except KeyError:
-        # 오류 발생 시 폴백 데이터 반환
-        st.error("오류: CSV 파일에 'YEAR' 또는 'DOY' 열이 없습니다. 헤더를 확인해주세요.")
-        return fallback_data_generator()
-        
-    df['Date'] = df.apply(
-        lambda row: datetime(int(row['YEAR']), 1, 1) + timedelta(days=int(row['DOY'])-1), 
-        axis=1
-    ).dt.date
-    
-    # 2. 데이터 정제 및 최종 포맷
-    
-    # 일별 데이터 (기온: T2M 평균, T2M_MAX 최고)
-    temp_avg = df[['Date', 'T2M']].rename(columns={'T2M': 'value', 'Date': 'date'}).assign(group="일 평균기온(℃)")
-    temp_max = df[['Date', 'T2M_MAX']].rename(columns={'T2M_MAX': 'value', 'Date': 'date'}).assign(group="일 최고기온(℃)")
-    
-    # 모든 일별 데이터 합치기
-    all_daily_df = pd.concat([temp_avg, temp_max], ignore_index=True)
-    
-    # 최종 정제 및 표준화
-    all_daily_df = clean_standardize(all_daily_df, "date", "value", "group")
-    all_daily_df["fallback"] = False # CSV 로드 성공
-    
-    return all_daily_df
+        r = requests.get(base_url, params=params, timeout=30)
+        r.raise_for_status()
+        js = r.json()
+        t2m = js["properties"]["parameter"]["T2M"]
+        t2m_max = js["properties"]["parameter"]["T2M_MAX"]
+        records = []
+        for k, v in t2m.items():
+            d = to_date(k)
+            if pd.isna(d): continue
+            records.append({"date": d, "t2m": v, "t2m_max": t2m_max.get(k, np.nan)})
+        df = pd.DataFrame(records)
+        out = df.rename(columns={"t2m": "value"}).assign(group="일 평균기온(℃)")
+        out2 = df.rename(columns={"t2m_max": "value"}).assign(group="일 최고기온(℃)")
+        all_df = pd.concat([out[["date", "value", "group"]], out2[["date", "value", "group"]]], ignore_index=True)
+        all_df = clean_standardize(all_df, "date", "value", "group")
+        all_df["fallback"] = False
+        return all_df
+    except Exception:
+        dates = pd.date_range(end=TODAY_DATE, periods=60, freq="D")
+        np.random.seed(42)
+        base = 27 + np.sin(np.linspace(0, 3 * np.pi, len(dates))) * 5
+        avg = base + np.random.normal(0, 1.2, len(dates))
+        tmax = avg + np.random.uniform(3, 8, len(dates))
+        df = pd.DataFrame({"date": dates.date, "value": np.r_[avg, tmax], "group": ["일 평균기온(℃)"] * len(dates) + ["일 최고기온(℃)"] * len(dates)})
+        df = clean_standardize(df, "date", "value", "group")
+        df["fallback"] = True
+        return df
 
 def make_heatwave_flags(df, threshold_max=33.0):
-    if df.empty:
-        return pd.DataFrame(columns=["date", "value", "group"])
-
-    w = df[df['group'] == "일 최고기온(℃)"].copy()
-    if w.empty or 'value' not in w.columns:
-        return pd.DataFrame(columns=["date", "value", "group"])
-    
-    # ★★★ 2차 수정: 필터링된 데이터프레임이 비어있는 경우 안전하게 빈 DF 반환 ★★★
-    if w.empty or 'value' not in w.columns: 
-        return pd.DataFrame(columns=["date", "value", "group"]) 
-    
-    # 이 아래부터는 w는 비어있지 않고 'value' 열을 포함함이 보장됨
-    w["폭염일"] = (w["value"] >= threshold_max).astype(int) # w.get("value") 대신 w["value"]를 사용해 명확히 Series를 참조
-    out = (w.rename(columns={"폭염일": "value"}).assign(group=f"폭염일(최고기온≥{threshold_max}℃)"))
+    if df.empty: return df
+    w = df.copy().pivot_table(index="date", columns="group", values="value")
+    w["폭염일"] = (w.get("일 최고기온(℃)", pd.Series(index=w.index)) >= threshold_max).astype(int)
+    out = (w.reset_index()[["date", "폭염일"]].rename(columns={"폭염일": "value"}).assign(group=f"폭염일(최고기온≥{threshold_max}℃)"))
     return clean_standardize(out, "date", "value", "group")
 
 def monthly_summary(df):
@@ -234,18 +191,14 @@ def monthly_summary(df):
     x["year"] = pd.to_datetime(x["date"]).dt.year
     x["month"] = pd.to_datetime(x["date"]).dt.month
     def agg_fn(g):
-        # 폭염일은 합계, 기온은 평균
-        is_heatwave = g.name[2].startswith("폭염일")
-        return pd.Series({"value": g["value"].sum()}) if is_heatwave else pd.Series({"value": g["value"].mean()})
-    
-    # apply 후 reset_index는 복잡하므로, groupby의 결과를 다시 DataFrame으로 만듦
-    m = x.groupby(["year", "month", "group"], as_index=False).apply(agg_fn, include_groups=False)
+        return pd.Series({"value": g["value"].sum()}) if g.name[2].startswith("폭염일") else pd.Series({"value": g["value"].mean()})
+    m = (x.groupby(["year", "month", "group"], as_index=False).apply(agg_fn).reset_index(drop=True))
     m["date"] = pd.to_datetime(dict(year=m["year"], month=m["month"], day=1)).dt.date
     return m[["date", "value", "group", "year", "month"]]
 
 def add_risk_annotation():
     st.markdown("""
-        > 참고: **연구에 따르면, 하루 평균기온이 1°C 높아질 때마다 청소년(12~24세) 자살 충동/행동으로 인한 응급실 방문이 약 1.3% 증가**하는 경향이 관찰되었습니다.  
+        > 참고: **연구에 따르면, 하루 평균기온이 1°C 높아질 때마다 청소년(12~24세) 자살 충동/행동으로 인한 응급실 방문이 약 1.3% 증가**하는 경향이 관찰되었습니다.  
         > (호주 뉴사우스웨일스州, 2012–2019 시계열 분석. 인과 단정 불가, 참고 지표로만 활용)
         """)
     with st.expander("연구 출처(주석) 보기", expanded=False):
@@ -260,7 +213,6 @@ def add_risk_annotation():
 @st.cache_data(show_spinner=False)
 def load_user_table():
     raw = """연도,1월,2월,3월,4월,5월,6월,7월,8월,9월,10월,11월,12월,연합계,순위
-    m = df.melt(id_vars=keep_cols, value_vars=month_cols, var_name="월", value_name="폭염일수")
 2015,0,0,0,0,0,1,4,3,0,0,0,0,8,10
 2016,0,0,0,0,0,0,4,20,0,0,0,0,24,4
 2017,0,0,0,0,0,1,5,7,0,0,0,0,13,8
@@ -272,18 +224,18 @@ def load_user_table():
 2023,0,0,0,0,0,2,6,11,0,0,0,0,19,5
 2024,0,0,0,0,0,4,2,21,6,0,0,0,33,2
 2025,0,0,0,0,0,3,15,9,1,,,,28,3
-평균,0.0,0.0,0.0,0.0,0.1,1.2,7.4,9.6,0.6,0.0,0.0,0.0,,  
+평균,0.0,0.0,0.0,0.0,0.1,1.2,7.4,9.6,0.6,0.0,0.0,0.0,, 
 """
     df = pd.read_csv(io.StringIO(raw))
     df = df[df["연도"].apply(lambda x: str(x).isdigit())].copy()
     df["연도"] = df["연도"].astype(int)
     month_cols = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"]
-    keep_cols = ["연도","연합계","순위"]
+    keep_cols = ["연합계","순위"]
     for c in month_cols:
         if c not in df.columns: df[c] = np.nan
-        
-    # [오류 수정 반영] id_vars에 "연도"가 이미 keep_cols에 있으므로, 중복 방지를 위해 keep_cols만 사용
-    m = df.melt(id_vars=keep_cols, value_vars=month_cols, var_name="월", value_name="폭염일수") 
+    
+    # ⚠️ 수정된 melt 함수 호출
+    m = pd.melt(df, id_vars=["연도"] + keep_cols, value_vars=month_cols, var_name="월", value_name="폭염일수")
     
     m["월_int"] = m["월"].str.replace("월", "", regex=False).astype(int)
     m["date"] = pd.to_datetime(dict(year=m["연도"], month=m["월_int"], day=1)).dt.date
@@ -324,7 +276,10 @@ def get_mental_health_indicators():
     kyrbs_data = pd.DataFrame({"연도": [2021, 2022, 2023, 2024, 2025], "우울감 경험률(%)": [25.0, 26.5, 27.2, 28.5, 29.1], "자살 생각률(%)": [10.5, 11.0, 11.3, 11.5, 11.8]})
     kyrbs_data["date"] = pd.to_datetime(dict(year=kyrbs_data["연도"], month=1, day=1)).dt.date
     kyrbs_data = clamp_to_today(kyrbs_data, "date")
-    melted_kyrbs = kyrbs_data.melt(id_vars=["연도", "date"], value_vars=["우울감 경험률(%)", "자살 생각률(%)"], var_name="group", value_name="value_perc").rename(columns={"value": "value_perc"})
+    
+    # ⚠️ 수정된 melt 함수 호출
+    melted_kyrbs = pd.melt(kyrbs_data, id_vars=["연도", "date"], value_vars=["우울감 경험률(%)", "자살 생각률(%)"], var_name="group", value_name="value_perc")
+    
     return research_indicators, melted_kyrbs
 
 def plot_kyrbs_trend(df):
@@ -339,7 +294,7 @@ def plot_kyrbs_trend(df):
 @st.cache_data(show_spinner=False)
 def get_academic_indicators():
     academic_indicators = pd.DataFrame([
-        {"지표": "기온 1°C↑ vs 학업 성취도 하락", "단위": "%", "값": 1, "출처": "연구(미국, 에어컨X 교실)", "설명": "외부 온도가 $1^\circ \text{C}$ 상승 시"},
+        {"지표": "기온 1°C↑ vs 학업 성취도 하락", "단위": "%", "값": 1, "출처": "연구(미국, 에어컨X 교실)", "설명": "외부 온도가 $1^\circ \\text{C}$ 상승 시"},
     ])
     start_year = 2018
     end_year = TODAY_DATE.year
@@ -354,7 +309,10 @@ def get_academic_indicators():
     academic_data["학업 성취도 변화율(%p, 가상)"] = (base_change + change_noise).round(2)
     academic_data["date"] = pd.to_datetime(dict(year=academic_data["연도"], month=1, day=1)).dt.date
     academic_data = clamp_to_today(academic_data, "date")
-    melted_academic = academic_data.melt(id_vars=["연도", "date"], value_vars=["고온 학습 손실 지수(가상)", "학업 성취도 변화율(%p, 가상)"], var_name="group", value_name="value")
+    
+    # ⚠️ 수정된 melt 함수 호출
+    melted_academic = pd.melt(academic_data, id_vars=["연도", "date"], value_vars=["고온 학습 손실 지수(가상)", "학업 성취도 변화율(%p, 가상)"], var_name="group", value_name="value")
+    
     return academic_indicators, melted_academic
 
 def plot_academic_trend(df):
@@ -370,7 +328,7 @@ def plot_academic_trend(df):
     st.plotly_chart(fig2, use_container_width=True)
 
 # -----------------------------
-# 5) 기후위기, 우리의 미래 대시보드 함수
+# 5) 기후위기, 우리의 미래 대시보드 함수 (신규 추가)
 # -----------------------------
 def display_future_solutions():
     """ 기후위기 해결 방안 (학생/학교 차원)을 텍스트로 구성 및 표시 """
@@ -500,42 +458,38 @@ def display_report():
 with st.sidebar:
     st.header("옵션")
     st.caption("※ 모든 라벨은 한국어, 오늘 이후 데이터는 자동 제거됩니다.")
-    # (탭 1, 탭 2의 사이드바 옵션은 아래 탭 코드에서 정의됨)
+    # (탭 1, 탭 2의 사이드바 옵션은 기존대로 유지)
 
 # -----------------------------
 # 탭 구성
 # -----------------------------
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📂 CSV 데이터 대시보드", # 제목 수정
+    "📡 공개 데이터 대시보드", 
     "📘 사용자 입력 대시보드", 
     "🧠 기후위기 & 청소년 정신건강(연구참고)", 
     "📚 기후위기 & 청소년 학업(연구참고)",
-    "🌱 기후위기, 우리의 미래"
+    "🌱 기후위기, 우리의 미래" # ★새로운 탭 추가
 ])
 
+# (탭 1, 탭 2, 탭 3, 탭 4의 내용은 위 함수 호출과 동일하게 유지)
 with tab1:
-    st.subheader("서울 일별 기온 & 폭염일 (CSV 로드)")
-    st.caption("출처: heatwave_1991_2025.csv 파일 로드. 파일 미존재 시 예시 데이터가 표시됩니다.")
+    st.subheader("서울 일별 기온 & 폭염일 (NASA POWER)")
+    st.caption("출처: NASA POWER API (T2M/T2M_MAX). API 실패 시 예시 데이터로 대체 표시됩니다.")
 
     colA, colB, colC = st.columns(3)
     with colA:
-        # CSV 로드 시 start_date/end_date는 함수에 전달할 필요가 없어 disabled 처리
-        st.date_input("조회 시작일 (파일 전체 기간)", value=date(2015,1,1), disabled=True)
+        start_date = st.date_input("조회 시작일", value=date(2015,1,1), min_value=date(1981,1,1), max_value=TODAY_DATE)
     with colB:
-        st.date_input("조회 종료일 (오늘 날짜까지)", value=TODAY_DATE, disabled=True)
+        end_date = st.date_input("조회 종료일", value=TODAY_DATE, min_value=start_date, max_value=TODAY_DATE)
     with colC:
         hw_threshold = st.number_input("폭염 기준(일최고기온, ℃)", min_value=30.0, max_value=40.0, value=33.0, step=0.5)
 
-    # CSV 로드 함수 호출 (실패 시 fallback 데이터 포함)
-    data = load_nasa_power_from_csv("heatwave_1991_2025.csv") 
-    
+    data = fetch_nasa_power_daily(start=start_date.isoformat(), end=end_date.isoformat())
     if data["fallback"].any():
-        st.warning("CSV 파일 로드에 실패했습니다. 60일간의 예시 데이터가 표시됩니다.") # 1차 수정 로직 유지
-    
-    # 폭염 플래그 생성 (data는 이제 항상 유효한 DataFrame 구조를 가집니다)
+        st.warning("API 호출 실패로 예시 데이터가 표시됩니다. (네트워크/서비스 상태 확인 필요)")
+
     hw = make_heatwave_flags(data, threshold_max=hw_threshold)
     std = pd.concat([data[["date","value","group"]], hw[["date","value","group"]]], ignore_index=True)
-    # 최종적으로 여기서 한 번 더 정리
     std = clean_standardize(std, "date", "value", "group")
 
     if not std.empty:
@@ -559,7 +513,7 @@ with tab1:
             )
 
     plot_line(std[std["group"].isin(["일 평균기온(℃)", "일 최고기온(℃)"])], "일별 기온 추이", "기온(℃)")
-    msum = monthly_summary(std)
+    msum = monthly_summary(pd.concat([data[["date","value","group"]], hw], ignore_index=True))
     monthly_heat = msum[msum["group"].str.startswith("폭염일")]
     monthly_temp = msum[~msum["group"].str.startswith("폭염일")]
     plot_bar(monthly_heat, "월별 폭염일수(합계)", "폭염일수(일)")
@@ -570,8 +524,9 @@ with tab1:
 
     st.markdown("#### 전처리된 표 다운로드")
     download_button_for_df(std[["date","value","group"]].sort_values(["date","group"]), "nasa_power_standardized.csv", "CSV 다운로드 (공개 데이터)")
-    st.caption("주석: 데이터는 'heatwave_1991_2025.csv' 파일에서 로드되었습니다.")
+    st.caption("주석: NASA POWER API 문서 URL은 코드 주석에 기재되어 있습니다. (앱 상단 주석 참조)")
 
+# 탭2: 사용자 입력 데이터 대시보드
 with tab2:
     st.subheader("사용자 입력 데이터 대시보드 — 폭염일수(연도·월)")
     st.caption("프롬프트로 제공된 표만 사용합니다. 업로드나 추가 입력을 요구하지 않습니다.")
@@ -586,15 +541,19 @@ with tab2:
             y_start, y_end = st.slider("표시 연도 범위", min_value=y_min, max_value=y_max, value=(y_min, y_max), key="tab2_yr_rng")
             smooth_months = st.select_slider("월 이동평균(연도별 적용)", options=[1,3], value=1, key="tab2_smooth")
 
-        view_df = user_long[(pd.to_datetime(user_long["date"]).dt.year >= y_start) & (pd.to_datetime(user_long["date"]).dt.year <= y_end)]
+        view_df = user_long[(pd.to_datetime(user_long["date"]).dt.year >= y_start) & 
+                            (pd.to_datetime(user_long["date"]).dt.year <= y_end)]
     else:
         view_df = user_long
         smooth_months = 1 
 
     if smooth_months > 1 and not view_df.empty:
         view_df = view_df.sort_values(["group","date"]).copy()
-        view_df["value"] = view_df.groupby("group")["value"].transform(lambda s: s.rolling(smooth_months, min_periods=1).mean())
+        view_df["value"] = view_df.groupby("group")["value"].transform(
+            lambda s: s.rolling(smooth_months, min_periods=1).mean()
+        )
 
+    # 시각화 함수 호출
     plot_user_monthly(view_df)
     st.markdown("---")
     plot_user_rank(user_year)
@@ -719,5 +678,5 @@ with tab5: # ★새로 추가된 '기후위기, 우리의 미래' 탭
 st.markdown("---")
 st.markdown("<br>", unsafe_allow_html=True)
 display_report()
-st.markdown("---")
-st.caption("© Streamlit 대시보드 예시. 데이터는 CSV 파일/제공 표/연구 인용 기준으로 구성되며, 오늘(로컬 자정) 이후 데이터는 제거됩니다.")
+st.markdown("---") 
+st.caption("© Streamlit 대시보드 예시. 데이터는 공개 API/제공 표/연구 인용 기준으로 구성되며, 오늘(로컬 자정) 이후 데이터는 제거됩니다.")
