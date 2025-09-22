@@ -43,7 +43,7 @@ print(os.path.exists(csv_path))  # True면 존재, False면 파일 경로 확인
 
 
 # CSV 경로 확인
-csv_path = "/workspaces/blank-app-5/heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세요
+csv_path = "heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세요
 
 # CSV 읽기
 df = pd.read_csv(csv_path)
