@@ -40,6 +40,7 @@ import os
 
 csv_path = "heatwave_1991_2025.csv"  # 현재 경로 기준
 print(os.path.exists(csv_path))  # True면 존재, False면 파일 경로 확인 필요
+df = pd.read_csv(csv_path, encoding="cp949")
 
 
 
