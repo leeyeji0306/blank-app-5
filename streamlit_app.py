@@ -11,9 +11,8 @@ Streamlit + GitHub Codespaces 데이터 대시보드 (기후위기 정신건강/
 5) 기후위기, 우리의 미래 (대안 탐색) 탭
 
 [!!! 중요 변경 사항 !!!]
-1. NASA API 호출 대신, 'heatwave_1991_2025.csv' 파일을 로드하도록 fetch_nasa_power_daily 함수를 대체했습니다.
-2. T2M, T2M_MAX 열 이름을 정확히 사용하도록 수정했습니다.
-3. 기존 NameError, KeyError 등 모든 오류를 수정했습니다.
+1. load_nasa_power_from_csv 실패 시 fallback_data_generator()를 직접 반환하도록 수정하여 TypeError 해결.
+2. tab1의 로직을 간소화하여 실패 메시지만 표시하도록 변경.
 """
 
 import io
@@ -90,7 +89,7 @@ def clean_standardize(df, date_col="date", value_col="value", group_col=None):
         df = df.drop_duplicates(subset=[date_col])
     # 타입 통일
     df[date_col] = pd.to_datetime(df[date_col]).dt.date
-    # value를 숫자형으로
+    # value를 숫자형으로 (이 부분에서 TypeError가 발생했으므로 입력 데이터가 Series인지 확인)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
     df = df.dropna(subset=[value_col])
     # 미래 데이터 제거
@@ -98,7 +97,7 @@ def clean_standardize(df, date_col="date", value_col="value", group_col=None):
     return df
 
 def download_button_for_df(df, filename, label="CSV 다운로드"):
-    csv = df.to_csv(index=False).encode("utf-8-sig")
+    csv = df.to_csv(index=False).encode("utf-utf-sig")
     st.download_button(label=label, data=csv, file_name=filename, mime="text/csv")
 
 def plot_line(df, title, yaxis_title):
@@ -146,6 +145,18 @@ def plot_bar(df, title, yaxis_title, barmode="group"):
 # -----------------------------
 # 1) CSV 파일 로드 및 전처리 함수 (기존 NASA API 함수 대체)
 # -----------------------------
+def fallback_data_generator():
+    """CSV 로드 실패 시 사용하는 예시 데이터 생성기"""
+    dates = pd.date_range(end=TODAY_DATE, periods=60, freq="D")
+    np.random.seed(42)
+    base = 27 + np.sin(np.linspace(0, 3 * np.pi, len(dates))) * 5
+    avg = base + np.random.normal(0, 1.2, len(dates))
+    tmax = avg + np.random.uniform(3, 8, len(dates))
+    df = pd.DataFrame({"date": dates.date, "value": np.r_[avg, tmax], "group": ["일 평균기온(℃)"] * len(dates) + ["일 최고기온(℃)"] * len(dates)})
+    df = clean_standardize(df, "date", "value", "group")
+    df["fallback"] = True
+    return df
+
 @st.cache_data(show_spinner=True, ttl=60 * 60 * 24)
 def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
     """
@@ -155,8 +166,8 @@ def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
         # 파일 로드
         df_raw = pd.read_csv(filename)
     except FileNotFoundError:
-        # 파일이 없을 경우, 폴백(예시 데이터) 플래그를 가진 빈 DF 반환
-        return pd.DataFrame().assign(fallback=True)
+        # 파일이 없을 경우, 폴백(예시 데이터) 생성 함수 호출 후 반환
+        return fallback_data_generator() # <--- 수정됨: 정상 구조의 DataFrame을 반환
 
     df = df_raw.copy()
     
@@ -169,8 +180,9 @@ def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
         df['YEAR'] = df['YEAR'].astype(int)
         df['DOY'] = df['DOY'].astype(int)
     except KeyError:
+        # 오류 발생 시 폴백 데이터 반환
         st.error("오류: CSV 파일에 'YEAR' 또는 'DOY' 열이 없습니다. 헤더를 확인해주세요.")
-        return pd.DataFrame().assign(fallback=True)
+        return fallback_data_generator()
         
     df['Date'] = df.apply(
         lambda row: datetime(int(row['YEAR']), 1, 1) + timedelta(days=int(row['DOY'])-1), 
@@ -191,18 +203,6 @@ def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
     all_daily_df["fallback"] = False # CSV 로드 성공
     
     return all_daily_df
-
-def fallback_data_generator():
-    """CSV 로드 실패 시 사용하는 예시 데이터 생성기"""
-    dates = pd.date_range(end=TODAY_DATE, periods=60, freq="D")
-    np.random.seed(42)
-    base = 27 + np.sin(np.linspace(0, 3 * np.pi, len(dates))) * 5
-    avg = base + np.random.normal(0, 1.2, len(dates))
-    tmax = avg + np.random.uniform(3, 8, len(dates))
-    df = pd.DataFrame({"date": dates.date, "value": np.r_[avg, tmax], "group": ["일 평균기온(℃)"] * len(dates) + ["일 최고기온(℃)"] * len(dates)})
-    df = clean_standardize(df, "date", "value", "group")
-    df["fallback"] = True
-    return df
 
 def make_heatwave_flags(df, threshold_max=33.0):
     if df.empty: return df
@@ -231,7 +231,7 @@ def monthly_summary(df):
 
 def add_risk_annotation():
     st.markdown("""
-        > 참고: **연구에 따르면, 하루 평균기온이 1°C 높아질 때마다 청소년(12~24세) 자살 충동/행동으로 인한 응급실 방문이 약 1.3% 증가**하는 경향이 관찰되었습니다.  
+        > 참고: **연구에 따르면, 하루 평균기온이 1°C 높아질 때마다 청소년(12~24세) 자살 충동/행동으로 인한 응급실 방문이 약 1.3% 증가**하는 경향이 관찰되었습니다.  
         > (호주 뉴사우스웨일스州, 2012–2019 시계열 분석. 인과 단정 불가, 참고 지표로만 활용)
         """)
     with st.expander("연구 출처(주석) 보기", expanded=False):
@@ -257,7 +257,7 @@ def load_user_table():
 2023,0,0,0,0,0,2,6,11,0,0,0,0,19,5
 2024,0,0,0,0,0,4,2,21,6,0,0,0,33,2
 2025,0,0,0,0,0,3,15,9,1,,,,28,3
-평균,0.0,0.0,0.0,0.0,0.1,1.2,7.4,9.6,0.6,0.0,0.0,0.0,,  
+평균,0.0,0.0,0.0,0.0,0.1,1.2,7.4,9.6,0.6,0.0,0.0,0.0,,  
 """
     df = pd.read_csv(io.StringIO(raw))
     df = df[df["연도"].apply(lambda x: str(x).isdigit())].copy()
@@ -267,7 +267,7 @@ def load_user_table():
     for c in month_cols:
         if c not in df.columns: df[c] = np.nan
         
-    # [★오류 수정 반영] id_vars에 "연도"가 이미 keep_cols에 있으므로, 중복 방지를 위해 keep_cols만 사용
+    # [오류 수정 반영] id_vars에 "연도"가 이미 keep_cols에 있으므로, 중복 방지를 위해 keep_cols만 사용
     m = df.melt(id_vars=keep_cols, value_vars=month_cols, var_name="월", value_name="폭염일수") 
     
     m["월_int"] = m["월"].str.replace("월", "", regex=False).astype(int)
@@ -511,15 +511,13 @@ with tab1:
     with colC:
         hw_threshold = st.number_input("폭염 기준(일최고기온, ℃)", min_value=30.0, max_value=40.0, value=33.0, step=0.5)
 
-    # ★★★ CSV 로드 함수 호출 ★★★
+    # ★★★ CSV 로드 함수 호출 (실패 시 fallback 데이터 포함) ★★★
     data = load_nasa_power_from_csv("heatwave_1991_2025.csv") 
     
-    # 로드 실패 시 예시 데이터 생성
-    if data.empty or data["fallback"].any():
-        data = fallback_data_generator()
-        st.warning("CSV 파일 로드에 실패하여 60일간의 예시 데이터가 표시됩니다.")
+    if data["fallback"].any():
+        st.warning("CSV 파일 로드에 실패했습니다. 60일간의 예시 데이터가 표시됩니다.") # <-- 로직 간소화
     
-    # 폭염 플래그 생성
+    # 폭염 플래그 생성 (data는 이제 항상 유효한 DataFrame 구조를 가집니다)
     hw = make_heatwave_flags(data, threshold_max=hw_threshold)
     std = pd.concat([data[["date","value","group"]], hw[["date","value","group"]]], ignore_index=True)
     std = clean_standardize(std, "date", "value", "group")
