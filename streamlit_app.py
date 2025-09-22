@@ -70,6 +70,28 @@ monthly.rename(columns={'YEAR':'Year','Month':'Month','Heatwave':'HeatwaveDays'}
 
 print(monthly.head())
 
+import pandas as pd
+from datetime import datetime, timedelta
+
+df = pd.read_csv("heatwave_1991_2025.csv")
+
+# YEAR와 DOY를 정수로 변환
+df['YEAR'] = df['YEAR'].astype(int)
+df['DOY'] = df['DOY'].astype(int)
+
+# 날짜 생성
+df['Date'] = df.apply(lambda row: datetime(int(row['YEAR']), 1, 1) + timedelta(days=int(row['DOY'])-1), axis=1)
+df['Month'] = df['Date'].dt.month
+
+# 폭염일 정의: 최고기온 >= 33°C
+df['Heatwave'] = df['T2M_MAX'] >= 33
+
+# 월별 폭염일수 집계
+monthly = df.groupby(['YEAR','Month'])['Heatwave'].sum().reset_index()
+monthly.rename(columns={'YEAR':'Year','Month':'Month','Heatwave':'HeatwaveDays'}, inplace=True)
+
+print(monthly.head())
+
 
 
 # Pretendard 적용 시도 (없으면 자동 생략)
