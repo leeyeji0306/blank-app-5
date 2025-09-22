@@ -11,8 +11,8 @@ Streamlit + GitHub Codespaces 데이터 대시보드 (기후위기 정신건강/
 5) 기후위기, 우리의 미래 (대안 탐색) 탭
 
 [!!! 중요 변경 사항 !!!]
-1. load_nasa_power_from_csv 실패 시 fallback_data_generator()를 직접 반환하도록 수정하여 TypeError 해결.
-2. tab1의 로직을 간소화하여 실패 메시지만 표시하도록 변경.
+1. load_nasa_power_from_csv 실패 시 fallback_data_generator()를 직접 반환하도록 수정 (1차 수정).
+2. make_heatwave_flags 함수 내부에 빈 데이터프레임 안전 처리 로직을 추가하여 TypeError 최종 해결 (2차 수정).
 """
 
 import io
@@ -89,7 +89,7 @@ def clean_standardize(df, date_col="date", value_col="value", group_col=None):
         df = df.drop_duplicates(subset=[date_col])
     # 타입 통일
     df[date_col] = pd.to_datetime(df[date_col]).dt.date
-    # value를 숫자형으로 (이 부분에서 TypeError가 발생했으므로 입력 데이터가 Series인지 확인)
+    # value를 숫자형으로 (여기서 오류가 났었지만, 앞선 함수 수정으로 해결됨)
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
     df = df.dropna(subset=[value_col])
     # 미래 데이터 제거
@@ -167,7 +167,11 @@ def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
         df_raw = pd.read_csv(filename)
     except FileNotFoundError:
         # 파일이 없을 경우, 폴백(예시 데이터) 생성 함수 호출 후 반환
-        return fallback_data_generator() # <--- 수정됨: 정상 구조의 DataFrame을 반환
+        return fallback_data_generator() # <--- 1차 수정
+    except Exception as e:
+        # 기타 로드 오류 시 폴백
+        st.error(f"CSV 파일을 읽는 중 예기치 않은 오류 발생: {e}")
+        return fallback_data_generator()
 
     df = df_raw.copy()
     
@@ -205,12 +209,18 @@ def load_nasa_power_from_csv(filename="heatwave_1991_2025.csv"):
     return all_daily_df
 
 def make_heatwave_flags(df, threshold_max=33.0):
-    if df.empty: return df
+    if df.empty: 
+        return pd.DataFrame(columns=["date", "value", "group"]) # 비어있는 표준 DF 반환
+    
     # '일 최고기온(℃)'만 추출하여 폭염 여부 판단
     w = df[df['group'] == "일 최고기온(℃)"].copy()
-    if w.empty: return pd.DataFrame()
     
-    w["폭염일"] = (w.get("value") >= threshold_max).astype(int)
+    # ★★★ 2차 수정: 필터링된 데이터프레임이 비어있는 경우 안전하게 빈 DF 반환 ★★★
+    if w.empty or 'value' not in w.columns: 
+        return pd.DataFrame(columns=["date", "value", "group"]) 
+    
+    # 이 아래부터는 w는 비어있지 않고 'value' 열을 포함함이 보장됨
+    w["폭염일"] = (w["value"] >= threshold_max).astype(int) # w.get("value") 대신 w["value"]를 사용해 명확히 Series를 참조
     out = (w.rename(columns={"폭염일": "value"}).assign(group=f"폭염일(최고기온≥{threshold_max}℃)"))
     return clean_standardize(out, "date", "value", "group")
 
@@ -511,15 +521,16 @@ with tab1:
     with colC:
         hw_threshold = st.number_input("폭염 기준(일최고기온, ℃)", min_value=30.0, max_value=40.0, value=33.0, step=0.5)
 
-    # ★★★ CSV 로드 함수 호출 (실패 시 fallback 데이터 포함) ★★★
+    # CSV 로드 함수 호출 (실패 시 fallback 데이터 포함)
     data = load_nasa_power_from_csv("heatwave_1991_2025.csv") 
     
     if data["fallback"].any():
-        st.warning("CSV 파일 로드에 실패했습니다. 60일간의 예시 데이터가 표시됩니다.") # <-- 로직 간소화
+        st.warning("CSV 파일 로드에 실패했습니다. 60일간의 예시 데이터가 표시됩니다.") # 1차 수정 로직 유지
     
     # 폭염 플래그 생성 (data는 이제 항상 유효한 DataFrame 구조를 가집니다)
     hw = make_heatwave_flags(data, threshold_max=hw_threshold)
     std = pd.concat([data[["date","value","group"]], hw[["date","value","group"]]], ignore_index=True)
+    # 최종적으로 여기서 한 번 더 정리
     std = clean_standardize(std, "date", "value", "group")
 
     if not std.empty:
