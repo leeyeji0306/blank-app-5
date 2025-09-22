@@ -51,8 +51,29 @@ csv_path = "heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세�
 # CSV 읽기
 df = pd.read_csv(csv_path, sep=",")
 
-# 컬럼 이름 변경
-df = df.rename(columns={"Year": "연도"})
+import pandas as pd
+
+# CSV 읽기
+df = pd.read_csv("heatwave_1991_2025.csv")
+
+# 컬럼 확인
+print(df.columns)
+
+# 영어 컬럼 기준으로 melt
+keep_cols = []  # 고정할 컬럼이 있으면 여기에 추가
+month_cols = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+# melt 전에 실제 존재하는 컬럼만 사용
+month_cols = [c for c in month_cols if c in df.columns]
+
+m = df.melt(id_vars=keep_cols + ["Year"], 
+            value_vars=month_cols, 
+            var_name="Month", 
+            value_name="HeatwaveDays")
+
+print(m.head())
+
 
 
 # Pretendard 적용 시도 (없으면 자동 생략)
