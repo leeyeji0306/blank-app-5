@@ -32,7 +32,17 @@ import plotly.express as px
 # 기본 설정
 # -----------------------------
 st.set_page_config(page_title="기후위기 & 청소년 대응 대시보드", layout="wide")
-df = pd.read_csv("heatwave_1991_2025.csv")
+import pandas as pd
+
+# CSV 경로 확인
+csv_path = "/workspaces/blank-app-5/heatwave_1991_2025.csv"  # 파일이 있는 위치로 맞춰주세요
+
+# CSV 읽기
+df = pd.read_csv(csv_path)
+
+# 컬럼 이름 변경
+df = df.rename(columns={"Year": "연도"})
+
 
 # Pretendard 적용 시도 (없으면 자동 생략)
 def inject_font_css():
